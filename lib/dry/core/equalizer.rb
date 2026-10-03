@@ -59,12 +59,13 @@ module Dry
       #
       # @api private
       def define_cmp_method
-        keys = @keys
-        define_method(:cmp?) do |comparator, other|
-          keys.all? do |key|
-            __send__(key).public_send(comparator, other.__send__(key))
+        module_eval(<<~RUBY, __FILE__, __LINE__ + 1)
+          def cmp?(comparator, other)
+            #{@keys.inspect}.all? do |key|
+              __send__(key).public_send(comparator, other.__send__(key))
+            end
           end
-        end
+        RUBY
         private :cmp?
       end
 
@@ -74,19 +75,24 @@ module Dry
       #
       # @api private
       def define_hash_method(immutable:)
-        calculate_hash = ->(obj) { @keys.map { |key| obj.__send__(key) }.push(obj.class).hash }
+        calculate_hash = "#{@keys.inspect}.map { |key| __send__(key) }.push(self.class).hash"
         if immutable
-          define_method(:hash) do
-            @__hash__ ||= calculate_hash.call(self)
-          end
-          define_method(:freeze) do
-            hash
-            super()
-          end
+          module_eval(<<~RUBY, __FILE__, __LINE__ + 1)
+            def hash
+              @__hash__ ||= #{calculate_hash}
+            end
+
+            def freeze
+              hash
+              super
+            end
+          RUBY
         else
-          define_method(:hash) do
-            calculate_hash.call(self)
-          end
+          module_eval(<<~RUBY, __FILE__, __LINE__ + 1)
+            def hash
+              #{calculate_hash}
+            end
+          RUBY
         end
       end
 
@@ -96,12 +102,13 @@ module Dry
       #
       # @api private
       def define_inspect_method
-        keys = @keys
-        define_method(:inspect) do
-          klass = self.class
-          name  = klass.name || klass.inspect
-          "#<#{name}#{keys.map { |key| " #{key}=#{__send__(key).inspect}" }.join}>"
-        end
+        module_eval(<<~RUBY, __FILE__, __LINE__ + 1)
+          def inspect
+            klass = self.class
+            name  = klass.name || klass.inspect
+            "#<\#{name}\#{#{@keys.inspect}.map { |key| " \#{key}=\#{__send__(key).inspect}" }.join}>"
+          end
+        RUBY
       end
 
       # The comparison methods

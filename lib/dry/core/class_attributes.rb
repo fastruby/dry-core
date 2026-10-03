@@ -65,35 +65,46 @@ module Dry
       #    defines :one, coerce: Dry::Types['coercible.string']
       #  end
       #
-      def defines(*args, type: ::Object, coerce: IDENTITY) # rubocop:disable Metrics/PerceivedComplexity
+      def defines(*args, type: ::Object, coerce: IDENTITY)
         unless coerce.respond_to?(:call)
           raise ::ArgumentError, "Non-callable coerce option: #{coerce.inspect}"
         end
 
+        # Readers and the inherited hook are defined from strings so they don't
+        # capture closures, which makes them callable from non-main Ractors.
+        # The writer needs `type` and `coerce`, so it stays a block.
         mod = ::Module.new do
           args.each do |name|
             ivar = :"@#{name}"
+            setter = :"__set_#{name}__"
 
-            define_method(name) do |value = Undefined|
-              if Undefined.equal?(value)
-                if instance_variable_defined?(ivar)
-                  instance_variable_get(ivar)
-                else
-                  nil
-                end
-              elsif type === value # rubocop:disable Style/CaseEquality
+            define_method(setter) do |value|
+              if type === value # rubocop:disable Style/CaseEquality
                 instance_variable_set(ivar, coerce.call(value))
               else
                 raise InvalidClassAttributeValueError.new(name, value)
               end
             end
+            private setter
+
+            module_eval(<<~RUBY, __FILE__, __LINE__ + 1)
+              def #{name}(value = ::Dry::Core::Constants::Undefined)
+                if ::Dry::Core::Constants::Undefined.equal?(value)
+                  #{ivar}
+                else
+                  #{setter}(value)
+                end
+              end
+            RUBY
           end
 
-          define_method(:inherited) do |klass|
-            args.each { |name| klass.send(name, send(name)) }
+          module_eval(<<~RUBY, __FILE__, __LINE__ + 1)
+            def inherited(klass)
+              #{args.inspect}.each { |name| klass.send(name, send(name)) }
 
-            super(klass)
-          end
+              super
+            end
+          RUBY
         end
 
         extend(mod)
